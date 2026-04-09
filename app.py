@@ -128,7 +128,7 @@ if uploaded_file is not None:
             blur_type = st.radio("Nguyên nhân mờ:", ["Mờ chuyển động (Motion Blur)", "Mờ mất nét (Gaussian Blur)"])
             
             if blur_type == "Mờ chuyển động (Motion Blur)":
-                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
+                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 500, 150)
                 angle = st.slider("Góc mờ (độ):", 0, 180, 0)
                 
                 # Tạo ma trận PSF cho Motion Blur
