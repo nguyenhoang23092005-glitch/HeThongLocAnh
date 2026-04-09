@@ -116,11 +116,63 @@ if uploaded_file is not None:
             st.image(display_img, use_container_width=True)
 
         elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
-            gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
-            kernel_size = st.slider("Kích thước cửa sổ lọc:", 3, 15, 5, step=2)
+            st.markdown("Sử dụng thuật toán **Wiener Deconvolution** trong miền tần số để giải chập.")
             
-            processed_img = wiener(gray_img, (kernel_size, kernel_size))
-            processed_img = np.clip(processed_img, 0, 255).astype(np.uint8)
+            # Khôi phục ảnh mờ thường xử lý trên kênh xám để đạt hiệu quả cao nhất
+            if len(img_input.shape) == 3:
+                gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
+            else:
+                gray_img = img_input
+
+            st.write("**1. Mô phỏng hàm mờ (PSF):**")
+            blur_type = st.radio("Nguyên nhân mờ:", ["Mờ chuyển động (Motion Blur)", "Mờ mất nét (Gaussian Blur)"])
+            
+            if blur_type == "Mờ chuyển động (Motion Blur)":
+                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
+                angle = st.slider("Góc mờ (độ):", 0, 180, 0)
+                
+                # Tạo ma trận PSF cho Motion Blur
+                psf = np.zeros((length, length), dtype=np.float32)
+                center = length // 2
+                cv2.line(psf, (0, center), (length - 1, center), 1, 1)
+                M = cv2.getRotationMatrix2D((center, center), angle, 1.0)
+                psf = cv2.warpAffine(psf, M, (length, length))
+                psf = psf / np.sum(psf) # Chuẩn hóa
+            else:
+                ksize = st.slider("Kích thước vùng mờ:", 3, 51, 15, step=2)
+                psf = cv2.getGaussianKernel(ksize, 0)
+                psf = psf * psf.T
+                
+            st.write("**2. Điều chỉnh hệ số Wiener:**")
+            K = st.slider("Hệ số nhiễu K (càng nhỏ càng sắc nét nhưng dễ vỡ hạt):", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
+
+            # --- THUẬT TOÁN WIENER DECONVOLUTION ---
+            img_h, img_w = gray_img.shape
+            
+            # Bọc (pad) PSF cho bằng kích thước ảnh
+            psf_padded = np.zeros_like(gray_img, dtype=np.float32)
+            kh, kw = psf.shape
+            psf_padded[:kh, :kw] = psf
+            
+            # Đưa tâm của PSF về góc tọa độ (0,0) cho biến đổi Fourier
+            psf_padded = np.roll(psf_padded, -kh//2, axis=0)
+            psf_padded = np.roll(psf_padded, -kw//2, axis=1)
+            
+            # Biến đổi Fourier ảnh và PSF
+            img_fft = np.fft.fft2(gray_img)
+            psf_fft = np.fft.fft2(psf_padded)
+            
+            # Công thức Wiener Filter
+            psf_fft_conj = np.conj(psf_fft)
+            psf_fft_mag_sq = np.abs(psf_fft) ** 2
+            wiener_filter = psf_fft_conj / (psf_fft_mag_sq + K)
+            
+            # Áp dụng bộ lọc và biến đổi ngược
+            img_restored_fft = img_fft * wiener_filter
+            img_restored = np.real(np.fft.ifft2(img_restored_fft))
+            
+            # Chuẩn hóa để hiển thị
+            processed_img = cv2.normalize(img_restored, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             
             st.image(processed_img, use_container_width=True, channels="GRAY")
             
