@@ -121,13 +121,12 @@ if uploaded_file is not None:
             
             restoration_mode = st.radio(
                 "Chọn phương pháp:",
-                ("Toán học truyền thống (Wiener Deconvolution)", "AI Deep Learning (FSRCNN)")
+                ("(Wiener Deconvolution)", "AI Deep Learning (FSRCNN)")
             )
 
             if restoration_mode == "Toán học truyền thống (Wiener Deconvolution)":
                 st.info("💡 Wiener truyền thống phù hợp với ảnh chỉ mờ nhẹ và biết rõ hướng mờ.")
                 
-                # --- GIỮ NGUYÊN CODE WIENER CŨ CỦA BẠN Ở ĐÂY ---
                 # Chuyển ảnh sang kênh xám
                 if len(img_input.shape) == 3:
                     gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
