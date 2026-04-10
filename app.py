@@ -111,42 +111,34 @@ if uploaded_file is not None:
     # -----------------------------
     elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
 
-        if len(img_input.shape)==3:
-            gray = cv2.cvtColor(img_input,cv2.COLOR_BGR2GRAY)
-        else:
-            gray = img_input
+        # chuyển ảnh xám
+        gray = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
 
-        length = st.slider("Chiều dài blur",5,100,30)
-        angle = st.slider("Góc blur",0,180,0)
-        K = st.slider("Hệ số nhiễu",0.0001,0.1,0.01)
+        h, w = gray.shape
 
-        psf = np.zeros((length,length))
-        center = length//2
-
-        cv2.line(psf,(0,center),(length-1,center),1,1)
-
-        M = cv2.getRotationMatrix2D((center,center),angle,1)
-        psf = cv2.warpAffine(psf,M,(length,length))
-
-        psf = psf/np.sum(psf)
-
+        # FFT ảnh
         img_fft = np.fft.fft2(gray)
 
-        psf_pad = np.zeros_like(gray)
-        psf_pad[:length,:length] = psf
+        # padding PSF
+        psf_pad = np.zeros((h, w))
+        psf_h, psf_w = psf.shape
 
-        psf_pad = np.roll(psf_pad,-length//2,axis=0)
-        psf_pad = np.roll(psf_pad,-length//2,axis=1)
+        psf_pad[:psf_h, :psf_w] = psf
+
+        psf_pad = np.roll(psf_pad, -psf_h//2, axis=0)
+        psf_pad = np.roll(psf_pad, -psf_w//2, axis=1)
 
         psf_fft = np.fft.fft2(psf_pad)
 
-        wiener_filter = np.conj(psf_fft)/(np.abs(psf_fft)**2 + K + 1e-8)
+        # Wiener filter
+        wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft)**2 + K + 1e-8)
 
+        # khôi phục ảnh
         result = np.real(np.fft.ifft2(img_fft * wiener_filter))
 
-        result = cv2.normalize(result,None,0,255,cv2.NORM_MINMAX).astype(np.uint8)
+        result = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX)
 
-        st.image(result,channels="GRAY",use_container_width=True)
+        result = result.astype(np.uint8)
 
     # -----------------------------
     elif filter_type == "AI Super Resolution (FSRCNN)":
