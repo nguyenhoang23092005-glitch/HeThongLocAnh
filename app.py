@@ -153,11 +153,19 @@ if uploaded_file is not None:
                 psf_padded = np.roll(psf_padded, -kw//2, axis=1)
                 psf_fft = np.fft.fft2(psf_padded)
                 
-                wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft) ** 2 + K)
+                wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft) ** 2 + K + 1e-8)
                 processed_img = np.real(np.fft.ifft2(img_fft * wiener_filter))
                 processed_img = cv2.normalize(processed_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
                 
-                st.image(processed_img, use_container_width=True, channels="GRAY")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.subheader("Ảnh gốc")
+                    st.image(gray_img, channels="GRAY")
+
+                with col2:
+                    st.subheader("Ảnh khôi phục Wiener")
+                    st.image(processed_img, channels="GRAY")
 
             elif restoration_mode == "AI Deep Learning (FSRCNN)":
                 st.success("🤖 Sử dụng mô hình FSRCNN để làm sắc nét và tăng độ phân giải x2.")
