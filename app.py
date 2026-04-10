@@ -115,7 +115,7 @@ if uploaded_file is not None:
             display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
             st.image(display_img, use_container_width=True)
 
-        elif filter_type == "Wiener Filter (Khôi phục ảnh mờ cơ bản)":
+        elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
             st.info("💡 Wiener truyền thống giải chập bằng Toán học. Phù hợp với ảnh mờ chuyển động nhẹ.")
             
             if len(img_input.shape) == 3:
