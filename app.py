@@ -110,16 +110,32 @@ if uploaded_file is not None:
 
     # -----------------------------
     elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
+        # Slider tham số
+        length = st.slider("Chiều dài vệt mờ", 5, 100, 30)
+        angle = st.slider("Góc mờ", 0, 180, 0)
+        K = st.slider("Hệ số nhiễu K", 0.0001, 0.1, 0.01)
 
-        # chuyển ảnh xám
+        # Tạo PSF
+        psf = np.zeros((length, length), dtype=np.float32)
+        center = length // 2
+
+        cv2.line(psf, (0, center), (length-1, center), 1, 1)
+
+        M = cv2.getRotationMatrix2D((center, center), angle, 1)
+        psf = cv2.warpAffine(psf, M, (length, length))
+
+        if np.sum(psf) != 0:
+            psf = psf / np.sum(psf)
+
+        # Chuyển ảnh xám
         gray = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
 
         h, w = gray.shape
-
+    
         # FFT ảnh
         img_fft = np.fft.fft2(gray)
 
-        # padding PSF
+        # Padding PSF
         psf_pad = np.zeros((h, w))
         psf_h, psf_w = psf.shape
 
@@ -128,17 +144,21 @@ if uploaded_file is not None:
         psf_pad = np.roll(psf_pad, -psf_h//2, axis=0)
         psf_pad = np.roll(psf_pad, -psf_w//2, axis=1)
 
+        # FFT PSF
         psf_fft = np.fft.fft2(psf_pad)
-
+    
         # Wiener filter
         wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft)**2 + K + 1e-8)
 
-        # khôi phục ảnh
+        # Khôi phục ảnh
         result = np.real(np.fft.ifft2(img_fft * wiener_filter))
 
+        # Chuẩn hóa ảnh
         result = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX)
-
         result = result.astype(np.uint8)
+
+        # Hiển thị
+        st.image(result, channels="GRAY", use_container_width=True)
 
     # -----------------------------
     elif filter_type == "AI Super Resolution (FSRCNN)":
