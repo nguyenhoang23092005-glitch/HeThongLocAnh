@@ -84,9 +84,10 @@ if uploaded_file is not None:
             "Chọn bộ lọc:", 
             ["Bilateral Filter (Khử nhiễu Gaussian)",
              "Median Filter (Trị nhiễu Muối Tiêu)",
-             "Non-Local Means (Khử nhiễu mạnh)", 
+             "Non-Local Means (Khử nhiễu mạnh)",
+             "Optimum Notch Filter (Nhiễu chu kỳ)",
              "Wiener Filter (Khôi phục ảnh mờ)", 
-             "Optimum Notch Filter (Nhiễu chu kỳ)"]
+             "AI Deep Learning (Siêu nét FSRCNN)"]
         )
         
         # --- ÁP DỤNG BỘ LỌC NGAY LẬP TỨC ---
@@ -114,92 +115,68 @@ if uploaded_file is not None:
             display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
             st.image(display_img, use_container_width=True)
 
-        elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
-            st.markdown("---")
-            st.header("🔬 Tùy chọn khôi phục ảnh mờ")
+        elif filter_type == "Wiener Filter (Khôi phục ảnh mờ cơ bản)":
+            st.info("💡 Wiener truyền thống giải chập bằng Toán học. Phù hợp với ảnh mờ chuyển động nhẹ.")
             
-            restoration_mode = st.radio(
-                "Chọn phương pháp:",
-                ("Toán học truyền thống (Wiener Deconvolution)", "AI Deep Learning (FSRCNN)")
-            )
+            if len(img_input.shape) == 3:
+                gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
+            else:
+                gray_img = img_input
 
-            if restoration_mode == "Toán học truyền thống (Wiener Deconvolution)":
-                st.info("💡 Wiener truyền thống phù hợp với ảnh chỉ mờ nhẹ và biết rõ hướng mờ.")
+            length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
+            angle = st.slider("Góc mờ (độ):", 0, 180, 0)
+            K = st.slider("Hệ số nhiễu K:", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
+
+            # Tạo ma trận PSF
+            psf = np.zeros((length, length), dtype=np.float32)
+            center = length // 2
+            cv2.line(psf, (0, center), (length - 1, center), 1, 1)
+            M = cv2.getRotationMatrix2D((center, center), angle, 1.0)
+            psf = cv2.warpAffine(psf, M, (length, length))
+            psf = psf / np.sum(psf)
+
+            # Giải chập Wiener
+            img_fft = np.fft.fft2(gray_img)
+            psf_padded = np.zeros_like(gray_img, dtype=np.float32)
+            kh, kw = psf.shape
+            psf_padded[:kh, :kw] = psf
+            psf_padded = np.roll(psf_padded, -kh//2, axis=0)
+            psf_padded = np.roll(psf_padded, -kw//2, axis=1)
+            psf_fft = np.fft.fft2(psf_padded)
+            
+            wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft) ** 2 + K)
+            processed_img = np.real(np.fft.ifft2(img_fft * wiener_filter))
+            processed_img = cv2.normalize(processed_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            
+            st.image(processed_img, use_container_width=True, channels="GRAY")
+
+        elif filter_type == "AI Deep Learning (Siêu nét FSRCNN)":
+            st.success("🤖 Trí tuệ nhân tạo (FSRCNN) đang 'đoán' và vẽ lại chi tiết, đồng thời tăng kích thước ảnh x2.")
+            
+            try:
+                # Khởi tạo và đọc mô hình AI
+                sr = cv2.dnn_superres.DnnSuperResImpl_create()
+                model_path = "FSRCNN_x2.pb"
+                sr.readModel(model_path)
+                sr.setModel("fsrcnn", 2)
                 
-                # Chuyển ảnh sang kênh xám
-                if len(img_input.shape) == 3:
-                    gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
+                # Kiểm tra kích thước ảnh tránh tràn RAM trên Streamlit
+                height, width = img_input.shape[:2]
+                if height * width > 1000000:
+                    st.warning("⚠️ Ảnh khá lớn, AI đang tự động thu nhỏ một chút trước khi xử lý để chống sập web...")
+                    img_input_small = cv2.resize(img_input, (0,0), fx=0.5, fy=0.5)
+                    processed_img = sr.upsample(img_input_small)
                 else:
-                    gray_img = img_input
-
-                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
-                angle = st.slider("Góc mờ (độ):", 0, 180, 0)
-                K = st.slider("Hệ số nhiễu K:", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
-
-                # Tạo ma trận PSF
-                psf = np.zeros((length, length), dtype=np.float32)
-                center = length // 2
-                cv2.line(psf, (0, center), (length - 1, center), 1, 1)
-                M = cv2.getRotationMatrix2D((center, center), angle, 1.0)
-                psf = cv2.warpAffine(psf, M, (length, length))
-                psf = psf / np.sum(psf)
-
-                # Giải chập Wiener
-                img_fft = np.fft.fft2(gray_img)
-                psf_padded = np.zeros_like(gray_img, dtype=np.float32)
-                kh, kw = psf.shape
-                psf_padded[:kh, :kw] = psf
-                psf_padded = np.roll(psf_padded, -kh//2, axis=0)
-                psf_padded = np.roll(psf_padded, -kw//2, axis=1)
-                psf_fft = np.fft.fft2(psf_padded)
+                    with st.spinner("🤖 AI đang phân tích và tái tạo ảnh..."):
+                        processed_img = sr.upsample(img_input)
                 
-                wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft) ** 2 + K + 1e-8)
-                processed_img = np.real(np.fft.ifft2(img_fft * wiener_filter))
-                processed_img = cv2.normalize(processed_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                # Hiển thị ảnh
+                display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
+                st.image(display_img, use_container_width=True)
+                st.caption(f"Kích thước ảnh gốc: {width}x{height} ➡️ Kích thước AI nội suy: {processed_img.shape[1]}x{processed_img.shape[0]}")
                 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.subheader("Ảnh gốc")
-                    st.image(gray_img, channels="GRAY")
-
-                with col2:
-                    st.subheader("Ảnh khôi phục Wiener")
-                    st.image(processed_img, channels="GRAY")
-
-            elif restoration_mode == "AI Deep Learning (FSRCNN)":
-                st.success("🤖 Sử dụng mô hình FSRCNN để làm sắc nét và tăng độ phân giải x2.")
-                
-                # Tích hợp AI Super Resolution từ OpenCV
-                try:
-                    # 1. Khởi tạo đối tượng Super Resolution
-                    sr = cv2.dnn_superres.DnnSuperResImpl_create()
-                    
-                    # 2. Đọc file mô hình .pb đã upload lên GitHub
-                    model_path = "FSRCNN_x2.pb"
-                    sr.readModel(model_path)
-                    
-                    # 3. Thiết lập mô hình và tỷ lệ phóng (fsrcnn, x2)
-                    sr.setModel("fsrcnn", 2)
-                    
-                    # 4. Chạy AI để xử lý ảnh màu
-                    height, width = img_input.shape[:2]
-                    if height * width > 1000000: # Ví dụ > 1 Megapixel
-                        st.warning("⚠️ Ảnh quá lớn, AI đang tự động thu nhỏ ảnh trước khi xử lý để tránh lỗi server.")
-                        img_input_small = cv2.resize(img_input, (0,0), fx=0.5, fy=0.5)
-                        processed_img = sr.upsample(img_input_small)
-                    else:
-                        with st.spinner("🤖 AI đang tính toán và vẽ lại chi tiết..."):
-                            processed_img = sr.upsample(img_input)
-                    
-                    # Chuyển BGR sang RGB để hiển thị màu gốc
-                    display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
-                    st.image(display_img, use_container_width=True)
-                    st.caption(f"Ảnh kết quả AI có kích thước: {processed_img.shape[1]}x{processed_img.shape[0]}")
-                    
-                except Exception as e:
-                    st.error(f"❌ Lỗi khi chạy mô hình AI: {e}")
-                    st.warning("💡 Đảm bảo bạn đã upload file 'FSRCNN_x2.pb' lên cùng thư mục với app.py trên GitHub.")
+            except Exception as e:
+                st.error(f"❌ Không thể chạy AI. Bạn kiểm tra lại đã up file FSRCNN_x2.pb lên GitHub chưa nhé. Lỗi chi tiết: {e}")
             
         elif filter_type == "Optimum Notch Filter (Nhiễu chu kỳ)":
             # Để vẽ biểu đồ phổ tần số minh họa, ta chỉ cần dùng ảnh xám
