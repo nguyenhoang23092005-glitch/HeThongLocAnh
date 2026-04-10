@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 import io
 from PIL import Image
-from scipy.signal import wiener
 
 # Thiết lập giao diện rộng
 st.set_page_config(page_title="Hệ Thống Lọc Ảnh Nâng Cao", layout="wide")
@@ -121,7 +120,7 @@ if uploaded_file is not None:
             
             restoration_mode = st.radio(
                 "Chọn phương pháp:",
-                ("(Wiener Deconvolution)", "AI Deep Learning (FSRCNN)")
+                ("Toán học truyền thống (Wiener Deconvolution)", "AI Deep Learning (FSRCNN)")
             )
 
             if restoration_mode == "Toán học truyền thống (Wiener Deconvolution)":
@@ -159,7 +158,6 @@ if uploaded_file is not None:
                 processed_img = cv2.normalize(processed_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
                 
                 st.image(processed_img, use_container_width=True, channels="GRAY")
-                # ------------------------------------------------
 
             elif restoration_mode == "AI Deep Learning (FSRCNN)":
                 st.success("🤖 Sử dụng mô hình FSRCNN để làm sắc nét và tăng độ phân giải x2.")
@@ -177,7 +175,6 @@ if uploaded_file is not None:
                     sr.setModel("fsrcnn", 2)
                     
                     # 4. Chạy AI để xử lý ảnh màu
-                    # Chú ý: AI Super Resolution tốn RAM. Nếu ảnh quá lớn có thể gây lỗi OOM trên web.
                     height, width = img_input.shape[:2]
                     if height * width > 1000000: # Ví dụ > 1 Megapixel
                         st.warning("⚠️ Ảnh quá lớn, AI đang tự động thu nhỏ ảnh trước khi xử lý để tránh lỗi server.")
@@ -268,7 +265,7 @@ if uploaded_file is not None:
                 st.caption("Ảnh Đã Lọc")
                 st.image(display_img, use_container_width=True)
 
-        #PHẦN TẢI ẢNH VỀ
+        # PHẦN TẢI ẢNH VỀ
         st.markdown("---")
         
         if 'processed_img' in locals():
