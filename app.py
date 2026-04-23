@@ -192,51 +192,81 @@ if uploaded_file is not None:
             st.image(display_img, use_container_width=True)
 
         elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
-            st.info("💡 Wiener truyền thống giải chập bằng Toán học. Dựa trên giả định biết trước hướng di chuyển của máy ảnh.")
-            
+            st.info("💡 Wiener filter khôi phục ảnh mờ dựa trên PSF và ước lượng nhiễu (Sn/Sf).")
+
+            # ================== CHUYỂN ẢNH ==================
             if len(img_input.shape) == 3:
-                gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
+                img_ycrcb = cv2.cvtColor(img_input, cv2.COLOR_BGR2YCrCb)
+                y, cr, cb = cv2.split(img_ycrcb)
+                gray_img = y
             else:
                 gray_img = img_input
 
-            col_controls, col_psf = st.columns([2, 1])
-            
-            with col_controls:
-                st.write("**1. Xây dựng Hàm suy biến (PSF - H(u,v)):**")
-                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
-                angle = st.slider("Góc mờ (độ):", 0, 180, 0)
-                
-                st.write("**2. Trọng số kìm hãm nhiễu:**")
-                K = st.slider("Hệ số nhiễu K:", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
+            rows, cols = gray_img.shape
 
-            # Tạo ma trận PSF
+            # ================== UI ==================
+            col_controls, col_psf = st.columns([2, 1])
+
+            with col_controls:
+                st.write("**1. Xây dựng PSF (Motion Blur):**")
+                length = st.slider("Chiều dài vệt mờ:", 1, 100, 30)
+                angle = st.slider("Góc mờ:", 0, 180, 0)
+
+                st.write("**2. Tham số Wiener:**")
+                K = st.slider("K (Sn/Sf):", 0.0001, 0.1, 0.01, format="%.4f")
+
+            # ================== TẠO PSF ==================
             psf = np.zeros((length, length), dtype=np.float32)
             center = length // 2
+
             cv2.line(psf, (0, center), (length - 1, center), 1, 1)
-            M = cv2.getRotationMatrix2D((center, center), angle, 1.0)
+            M = cv2.getRotationMatrix2D((center, center), angle, 1)
             psf = cv2.warpAffine(psf, M, (length, length))
-            psf = psf / np.sum(psf)
+
+            psf = psf / (psf.sum() + 1e-8)  # tránh chia 0
 
             with col_psf:
-                st.write("**Ma trận PSF:**")
                 psf_display = cv2.resize(psf, (150, 150), interpolation=cv2.INTER_NEAREST)
                 psf_display = cv2.normalize(psf_display, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                st.image(psf_display, caption=f"Kích thước thật: {length}x{length}", use_container_width=False)
+                st.image(psf_display, caption="PSF", use_container_width=False)
 
-            # Giải chập Wiener
+            # ================== FFT ==================
             img_fft = np.fft.fft2(gray_img)
+
+            # Padding PSF về cùng kích thước ảnh
             psf_padded = np.zeros_like(gray_img, dtype=np.float32)
             kh, kw = psf.shape
             psf_padded[:kh, :kw] = psf
-            psf_padded = np.roll(psf_padded, -kh//2, axis=0)
-            psf_padded = np.roll(psf_padded, -kw//2, axis=1)
+
+            # Dịch tâm PSF
+            psf_padded = np.fft.ifftshift(psf_padded)
+
             psf_fft = np.fft.fft2(psf_padded)
+
+            # ================== WIENER FILTER ==================
+            eps = 1e-8
+            H_conj = np.conj(psf_fft)
+            H_abs2 = np.abs(psf_fft) ** 2
+
+            wiener = H_conj / (H_abs2 + K + eps)
+
+            # ================== KHÔI PHỤC ==================
+            result_fft = img_fft * wiener
+            img_back = np.real(np.fft.ifft2(result_fft))
+
+            # ================== CHUẨN HÓA ==================
+            processed_gray = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            # ================== GHÉP LẠI ẢNH MÀU ==================
+            if len(img_input.shape) == 3:
+                result_ycrcb = cv2.merge([processed_gray, cr, cb])
+                processed_img = cv2.cvtColor(result_ycrcb, cv2.COLOR_YCrCb2BGR)
+                display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
+            else:
+                display_img = processed_gray
+
+            st.image(display_img, use_container_width=True)
             
-            wiener_filter = np.conj(psf_fft) / (np.abs(psf_fft) ** 2 + K)
-            processed_img = np.real(np.fft.ifft2(img_fft * wiener_filter))
-            processed_img = cv2.normalize(processed_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            
-            st.image(processed_img, use_container_width=True, channels="GRAY")
 
         elif filter_type == "AI Deep Learning (Siêu nét FSRCNN)":
             st.success("🤖 Trí tuệ nhân tạo (FSRCNN) đang 'đoán' và vẽ lại chi tiết, đồng thời tăng kích thước ảnh x2.")
