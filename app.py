@@ -239,7 +239,8 @@ if uploaded_file is not None:
             psf_padded[:kh, :kw] = psf
 
             # Dịch tâm PSF
-            psf_padded = np.fft.ifftshift(psf_padded)
+            psf_padded = np.roll(psf_padded, -kh//2, axis=0)
+            psf_padded = np.roll(psf_padded, -kw//2, axis=1)
 
             psf_fft = np.fft.fft2(psf_padded)
 
