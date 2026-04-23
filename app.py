@@ -297,7 +297,6 @@ if uploaded_file is not None:
                     exclude_radius=exclude_radius,
                     suppress_radius=suppress_radius
                 )
-                st.write("📍 Các đỉnh nhiễu phát hiện được:", peaks)
             else:
                 # Nếu muốn nhập tay vẫn hỗ trợ
                 u0 = st.slider("Tọa độ nhiễu theo trục dọc (u0):", -crow, crow, 30)
