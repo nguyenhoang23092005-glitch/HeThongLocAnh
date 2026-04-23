@@ -4,6 +4,77 @@ import numpy as np
 import io
 from PIL import Image
 
+# ===================== HÀM HỖ TRỢ (HELPER FUNCTIONS) =====================
+
+def detect_periodic_peaks(mag, num_peaks=4, exclude_radius=25, suppress_radius=18):
+    """
+    Phát hiện các đỉnh nhiễu mạnh trong phổ tần số.
+    Trả về danh sách tọa độ tương đối so với tâm: [(u0, v0), ...]
+    """
+    rows, cols = mag.shape
+    crow, ccol = rows // 2, cols // 2
+
+    work = mag.copy().astype(np.float32)
+
+    # Loại vùng trung tâm để không lấy DC component
+    cv2.circle(work, (ccol, crow), exclude_radius, 0, -1)
+
+    peaks = []
+    for _ in range(num_peaks):
+        idx = np.unravel_index(np.argmax(work), work.shape)
+        if work[idx] <= 0:
+            break
+
+        r, c = idx
+        u0 = r - crow
+        v0 = c - ccol
+        peaks.append((u0, v0))
+
+        # Suppress vùng quanh đỉnh vừa tìm và đỉnh đối xứng
+        cv2.circle(work, (c, r), suppress_radius, 0, -1)
+        sr, sc = 2 * crow - r, 2 * ccol - c
+        if 0 <= sr < rows and 0 <= sc < cols:
+            cv2.circle(work, (sc, sr), suppress_radius, 0, -1)
+
+    # Loại trùng đơn giản
+    unique = []
+    seen = set()
+    for u, v in peaks:
+        key = (int(u), int(v))
+        if key not in seen and (-key[0], -key[1]) not in seen:
+            unique.append((u, v))
+            seen.add(key)
+
+    return unique
+
+
+def build_gaussian_notch_reject_mask(shape, centers, d0=15):
+    """
+    Mặt nạ Gaussian Notch Reject:
+    H(u,v) = Π [1 - exp(-Dk^2 / (2D0^2))] [1 - exp(-Dk'^2 / (2D0^2))]
+    """
+    rows, cols = shape
+    crow, ccol = rows // 2, cols // 2
+
+    U, V = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
+    mask = np.ones((rows, cols), dtype=np.float32)
+
+    for u0, v0 in centers:
+        # notch tại (crow+u0, ccol+v0)
+        d1_sq = (U - (crow + u0))**2 + (V - (ccol + v0))**2
+        # notch đối xứng tại (crow-u0, ccol-v0)
+        d2_sq = (U - (crow - u0))**2 + (V - (ccol - v0))**2
+
+        H1 = 1.0 - np.exp(-d1_sq / (2.0 * (d0**2)))
+        H2 = 1.0 - np.exp(-d2_sq / (2.0 * (d0**2)))
+
+        mask *= (H1 * H2)
+
+    return mask
+
+
+# ===================== MAIN APP =====================
+
 # Thiết lập giao diện rộng
 st.set_page_config(page_title="Hệ Thống Lọc Ảnh Nâng Cao", layout="wide")
 
@@ -13,15 +84,20 @@ st.title("Hệ Thống Lọc & Khôi Phục Ảnh Nâng Cao")
 uploaded_file = st.file_uploader("Tải ảnh của bạn lên (JPG, PNG)", type=['png', 'jpg', 'jpeg'])
 
 if uploaded_file is not None:
-    # Đọc và chuyển đổi ảnh sang định dạng OpenCV (NumPy array)
-    image = Image.open(uploaded_file)
-    img_array = np.array(image)
-    
-    # OpenCV dùng hệ màu BGR thay vì RGB
-    if len(img_array.shape) == 3:
-        img_cv2 = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    else:
-        img_cv2 = img_array
+    try:
+        # 1. Đọc file thẳng từ bộ nhớ đệm thành mảng byte (Chống lỗi PIL)
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        
+        # 2. Dùng OpenCV giải mã trực tiếp
+        img_cv2 = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR) 
+        
+        if img_cv2 is None:
+            st.error("🚨 File tải lên bị hỏng dữ liệu hoặc không phải là ảnh hợp lệ.")
+            st.stop()
+            
+    except Exception as e:
+        st.error(f"Lỗi hệ thống khi đọc ảnh: {e}")
+        st.stop()
 
     # --- BỘ TẠO NHIỄU (SIDEBAR) ---
     st.sidebar.header("🛠️ Giả lập nhiễu")
@@ -116,16 +192,22 @@ if uploaded_file is not None:
             st.image(display_img, use_container_width=True)
 
         elif filter_type == "Wiener Filter (Khôi phục ảnh mờ)":
-            st.info("💡 Wiener truyền thống giải chập bằng Toán học. Phù hợp với ảnh mờ chuyển động nhẹ.")
+            st.info("💡 Wiener truyền thống giải chập bằng Toán học. Dựa trên giả định biết trước hướng di chuyển của máy ảnh.")
             
             if len(img_input.shape) == 3:
                 gray_img = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
             else:
                 gray_img = img_input
 
-            length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
-            angle = st.slider("Góc mờ (độ):", 0, 180, 0)
-            K = st.slider("Hệ số nhiễu K:", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
+            col_controls, col_psf = st.columns([2, 1])
+            
+            with col_controls:
+                st.write("**1. Xây dựng Hàm suy biến (PSF - H(u,v)):**")
+                length = st.slider("Chiều dài vệt mờ (pixel):", 1, 100, 30)
+                angle = st.slider("Góc mờ (độ):", 0, 180, 0)
+                
+                st.write("**2. Trọng số kìm hãm nhiễu:**")
+                K = st.slider("Hệ số nhiễu K:", 0.0001, 0.1, 0.01, format="%.4f", step=0.001)
 
             # Tạo ma trận PSF
             psf = np.zeros((length, length), dtype=np.float32)
@@ -134,6 +216,12 @@ if uploaded_file is not None:
             M = cv2.getRotationMatrix2D((center, center), angle, 1.0)
             psf = cv2.warpAffine(psf, M, (length, length))
             psf = psf / np.sum(psf)
+
+            with col_psf:
+                st.write("**Ma trận PSF:**")
+                psf_display = cv2.resize(psf, (150, 150), interpolation=cv2.INTER_NEAREST)
+                psf_display = cv2.normalize(psf_display, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                st.image(psf_display, caption=f"Kích thước thật: {length}x{length}", use_container_width=False)
 
             # Giải chập Wiener
             img_fft = np.fft.fft2(gray_img)
@@ -154,13 +242,11 @@ if uploaded_file is not None:
             st.success("🤖 Trí tuệ nhân tạo (FSRCNN) đang 'đoán' và vẽ lại chi tiết, đồng thời tăng kích thước ảnh x2.")
             
             try:
-                # Khởi tạo và đọc mô hình AI
                 sr = cv2.dnn_superres.DnnSuperResImpl_create()
                 model_path = "FSRCNN_x2.pb"
                 sr.readModel(model_path)
                 sr.setModel("fsrcnn", 2)
                 
-                # Kiểm tra kích thước ảnh tránh tràn RAM trên Streamlit
                 height, width = img_input.shape[:2]
                 if height * width > 1000000:
                     st.warning("⚠️ Ảnh khá lớn, AI đang tự động thu nhỏ một chút trước khi xử lý để chống sập web...")
@@ -170,84 +256,91 @@ if uploaded_file is not None:
                     with st.spinner("🤖 AI đang phân tích và tái tạo ảnh..."):
                         processed_img = sr.upsample(img_input)
                 
-                # Hiển thị ảnh
                 display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
                 st.image(display_img, use_container_width=True)
                 st.caption(f"Kích thước ảnh gốc: {width}x{height} ➡️ Kích thước AI nội suy: {processed_img.shape[1]}x{processed_img.shape[0]}")
                 
             except Exception as e:
                 st.error(f"❌ Không thể chạy AI. Bạn kiểm tra lại đã up file FSRCNN_x2.pb lên GitHub chưa nhé. Lỗi chi tiết: {e}")
-            
+
         elif filter_type == "Optimum Notch Filter (Nhiễu chu kỳ)":
-            # Để vẽ biểu đồ phổ tần số minh họa, ta chỉ cần dùng ảnh xám
+            st.info("💡 Optimum Notch Filter tự động dò tìm và triệt tiêu các đỉnh nhiễu chu kỳ bằng mặt nạ Gaussian trên không gian màu YCrCb.")
+            
             if len(img_input.shape) == 3:
-                gray_for_spectrum = cv2.cvtColor(img_input, cv2.COLOR_BGR2GRAY)
+                # Khuyến nghị lọc trên kênh sáng Y để giữ màu tốt hơn
+                img_ycrcb = cv2.cvtColor(img_input, cv2.COLOR_BGR2YCrCb)
+                y_channel, cr_channel, cb_channel = cv2.split(img_ycrcb)
+                img_for_filter = y_channel
             else:
-                gray_for_spectrum = img_input
-                
-            rows, cols = gray_for_spectrum.shape
+                img_for_filter = img_input
+
+            rows, cols = img_for_filter.shape
             crow, ccol = rows // 2, cols // 2
-            
-            st.write("Điều chỉnh tọa độ để 'đục lỗ' triệt tiêu nhiễu:")
-            
-            # Đã set sẵn tọa độ vàng (30, 53) làm mặc định cho ảnh 800x450
-            u0 = st.slider("Tọa độ nhiễu theo trục dọc (u0):", -crow, crow, 30)
-            v0 = st.slider("Tọa độ nhiễu theo trục ngang (v0):", -ccol, ccol, 53)
-            d0 = st.slider("Bán kính che nhiễu (D0):", 1, 50, 15)
-            
-            # Tạo Mask chung
-            mask = np.ones((rows, cols), np.uint8)
-            cv2.circle(mask, (ccol + v0, crow + u0), d0, 0, -1)
-            cv2.circle(mask, (ccol - v0, crow - u0), d0, 0, -1)
-            
-            # --- BẮT ĐẦU XỬ LÝ ẢNH MÀU ---
-            if len(img_input.shape) == 3:
-                # Tách 3 kênh màu (B, G, R)
-                channels = cv2.split(img_input)
-                processed_channels = []
-                
-                # Áp dụng Notch Filter cho TỪNG kênh
-                for ch in channels:
-                    f = np.fft.fft2(ch)
-                    fshift = np.fft.fftshift(f)
-                    fshift_filtered = fshift * mask # Áp lỗ đen
-                    
-                    f_ishift = np.fft.ifftshift(fshift_filtered)
-                    img_back = np.fft.ifft2(f_ishift)
-                    processed_channels.append(np.real(img_back))
-                
-                # Gộp 3 kênh lại thành ảnh màu
-                merged_back = cv2.merge(processed_channels)
-                
-                # Chuẩn hóa để hiển thị
-                processed_img = cv2.normalize(merged_back, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
-                
+
+            # FFT ảnh gốc
+            f = np.fft.fft2(img_for_filter)
+            fshift = np.fft.fftshift(f)
+            magnitude_spectrum = np.log1p(np.abs(fshift))
+
+            st.write("**Điều chỉnh tham số cho Optimum Notch Filter:**")
+
+            auto_detect = st.checkbox("Tự động phát hiện đỉnh nhiễu", value=True)
+
+            if auto_detect:
+                num_peaks = st.slider("Số đỉnh nhiễu cần triệt", 1, 10, 3)
+                exclude_radius = st.slider("Bán kính bỏ qua vùng tâm", 5, min(rows, cols) // 4, 25)
+                suppress_radius = st.slider("Bán kính triệt vùng lân cận đỉnh", 5, 50, 18)
+
+                peaks = detect_periodic_peaks(
+                    magnitude_spectrum,
+                    num_peaks=num_peaks,
+                    exclude_radius=exclude_radius,
+                    suppress_radius=suppress_radius
+                )
+                st.write("📍 Các đỉnh nhiễu phát hiện được:", peaks)
             else:
-                # Xử lý nếu ảnh gốc vốn dĩ là ảnh xám
-                f = np.fft.fft2(img_input)
-                fshift = np.fft.fftshift(f)
-                fshift_filtered = fshift * mask
-                
-                f_ishift = np.fft.ifftshift(fshift_filtered)
-                img_back = np.real(np.fft.ifft2(f_ishift))
-                processed_img = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                display_img = processed_img
+                # Nếu muốn nhập tay vẫn hỗ trợ
+                u0 = st.slider("Tọa độ nhiễu theo trục dọc (u0):", -crow, crow, 30)
+                v0 = st.slider("Tọa độ nhiễu theo trục ngang (v0):", -ccol, ccol, 53)
+                peaks = [(u0, v0)]
+
+            d0 = st.slider("Bán kính notch (D0):", 1, 80, 15)
+
+            # Tạo mask notch
+            mask = build_gaussian_notch_reject_mask((rows, cols), peaks, d0=d0)
+
+            # Áp mask trong miền tần số
+            fshift_filtered = fshift * mask
+
+            # Biến đổi ngược
+            f_ishift = np.fft.ifftshift(fshift_filtered)
+            img_back = np.real(np.fft.ifft2(f_ishift))
+
+            # Chuẩn hóa ảnh kết quả
+            processed_gray = cv2.normalize(img_back, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            # Phục hồi ảnh màu nếu đầu vào là màu
+            if len(img_input.shape) == 3:
+                restored_ycrcb = cv2.merge([processed_gray, cr_channel, cb_channel])
+                processed_img = cv2.cvtColor(restored_ycrcb, cv2.COLOR_YCrCb2BGR)
+                display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
+            else:
+                processed_img = processed_gray
+                display_img = processed_gray
+
+            # Phổ sau lọc để minh họa
+            magnitude_spectrum_filtered = np.log1p(np.abs(fshift_filtered))
+            mag_display = cv2.normalize(magnitude_spectrum_filtered, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
             # Hiển thị kết quả
             col_freq, col_res = st.columns(2)
+
             with col_freq:
-                st.caption("Phổ Tần Số (Minh họa)")
-                # Tính phổ tần số của ảnh xám để người dùng nhìn thấy lỗ đen
-                f_gray = np.fft.fft2(gray_for_spectrum)
-                fshift_gray = np.fft.fftshift(f_gray)
-                magnitude_spectrum = 20 * np.log(np.abs(fshift_gray) + 1)
-                magnitude_spectrum_filtered = magnitude_spectrum * mask
-                mag_display = cv2.normalize(magnitude_spectrum_filtered, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                st.caption("Phổ tần số sau khi áp Notch Filter")
                 st.image(mag_display, use_container_width=True, channels="GRAY")
-                
+
             with col_res:
-                st.caption("Ảnh Đã Lọc")
+                st.caption("Ảnh đã khôi phục")
                 st.image(display_img, use_container_width=True)
 
         # PHẦN TẢI ẢNH VỀ
