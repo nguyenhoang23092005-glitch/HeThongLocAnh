@@ -36,22 +36,42 @@ if uploaded_file is not None:
     img_input = img_cv2.copy()
     
     if noise_choice == "Nhiễu Gaussian":
-        noise = np.random.normal(0, 25, img_input.shape).astype(np.float32)
+        st.sidebar.markdown("---")
+        st.sidebar.write("💡 **Cấu hình Nhiễu Gaussian:**")
+        # Thêm thanh trượt để chỉnh cường độ nhiễu thay vì fix cứng số 25
+        std = st.sidebar.slider("Cường độ nhiễu (Sigma):", 5, 100, 25)
+        
+        noise = np.random.normal(0, std, img_input.shape).astype(np.float32)
         img_input = cv2.add(img_input.astype(np.float32), noise)
         img_input = np.clip(img_input, 0, 255).astype(np.uint8)
         
     elif noise_choice == "Nhiễu Muối Tiêu":
-        prob = 0.05
+        st.sidebar.markdown("---")
+        st.sidebar.write("💡 **Cấu hình Nhiễu Muối Tiêu:**")
+        # Thêm thanh trượt chỉnh mật độ hạt nhiễu (từ 1% đến 50%)
+        prob = st.sidebar.slider("Mật độ nhiễu (Probability):", 0.01, 0.50, 0.05, step=0.01)
+        
         rnd = np.random.rand(*img_input.shape[:2])
         img_input[rnd < prob/2] = 0
         img_input[rnd > 1 - prob/2] = 255
         
     elif noise_choice == "Nhiễu Chu Kỳ":
+        st.sidebar.markdown("---")
+        st.sidebar.write("💡 **Cấu hình Nhiễu Chu Kỳ:**")
+        # Thêm các thanh trượt để chỉnh độ đậm và khoảng cách các vân sọc
+        amp = st.sidebar.slider("Biên độ nhiễu (Độ đậm):", 10, 100, 30)
+        u0_noise = st.sidebar.slider("Tần số trục X (u0):", 1, 100, 15)
+        v0_noise = st.sidebar.slider("Tần số trục Y (v0):", 1, 100, 15)
+        
         rows, cols = img_input.shape[:2]
         X, Y = np.meshgrid(np.arange(cols), np.arange(rows))
-        noise = 30 * np.sin(2 * np.pi * X / 15 + 2 * np.pi * Y / 15)
+        
+        # Cập nhật công thức sử dụng biến từ thanh trượt
+        noise = amp * np.sin(2 * np.pi * u0_noise * X / cols + 2 * np.pi * v0_noise * Y / rows)
+        
         if len(img_input.shape) == 3:
             noise = noise[:, :, np.newaxis] 
+            
         img_input = img_input.astype(np.float32) + noise.astype(np.float32)
         img_input = np.clip(img_input, 0, 255).astype(np.uint8)
 
@@ -100,7 +120,7 @@ if uploaded_file is not None:
              "Non-Local Means",
              "Optimum Notch Filter (Nhiễu chu kỳ)",
              "Wiener Filter (Khôi phục ảnh mờ)", 
-             "AI Deep Learning (Siêu nét FSRCNN)"]
+             "AI FSRCNN"]
         )
         
         # --- ÁP DỤNG BỘ LỌC NGAY LẬP TỨC ---
@@ -189,7 +209,7 @@ if uploaded_file is not None:
             
             st.image(display_img, use_container_width=True)
 
-        elif filter_type == "AI Deep Learning (Siêu nét FSRCNN)":
+        elif filter_type == "AI FSRCNN":
             st.success("🤖 Trí tuệ nhân tạo (FSRCNN) đang 'đoán' và vẽ lại chi tiết, đồng thời tăng kích thước ảnh x2.")
             
             try:
@@ -201,13 +221,8 @@ if uploaded_file is not None:
                 
                 # Kiểm tra kích thước ảnh tránh tràn RAM trên Streamlit
                 height, width = img_input.shape[:2]
-                if height * width > 1000000:
-                    st.warning("⚠️ Ảnh khá lớn, AI đang tự động thu nhỏ một chút trước khi xử lý để chống sập web...")
-                    img_input_small = cv2.resize(img_input, (0,0), fx=0.5, fy=0.5)
-                    processed_img = sr.upsample(img_input_small)
-                else:
-                    with st.spinner("🤖 AI đang phân tích và tái tạo ảnh..."):
-                        processed_img = sr.upsample(img_input)
+    
+                processed_img = sr.upsample(img_input)
                 
                 # Hiển thị ảnh
                 display_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
